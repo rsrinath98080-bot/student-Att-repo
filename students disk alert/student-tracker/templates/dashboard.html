@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{{ student.name }} - Student Attendance Tracker</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <!-- Application Header -->
+  <header class="app-header" role="banner">
+    <div class="header-content">
+      <div class="header-brand">
+        <span style="font-size: 1.4rem;" aria-hidden="true">🎓</span>
+        <h1>Attendance Tracker</h1>
+      </div>
+
+      <div class="header-actions">
+        <!-- Notification Bell Button -->
+        <button 
+          type="button" 
+          class="btn btn-icon bell-btn" 
+          id="notification-bell-btn"
+          aria-label="Attendance Alerts and Notifications ({{ data.reasons|length }} active)"
+          title="Open Attendance Alerts"
+        >
+          <span aria-hidden="true">🔔</span>
+          <span 
+            class="bell-badge {% if not data.flagged or data.reasons|length == 0 %}hidden{% endif %}" 
+            id="bell-badge-count"
+            aria-hidden="true"
+          >
+            {{ data.reasons|length }}
+          </span>
+        </button>
+
+        <!-- Theme Toggle -->
+        <button type="button" class="btn btn-sm btn-icon" id="theme-toggle-btn" aria-label="Toggle dark/light theme">
+          <span id="theme-icon">🌓</span> <span id="theme-label" style="font-size: 0.8rem; margin-left: 0.3rem;">Auto</span>
+        </button>
+
+        <!-- Sign Out Button -->
+        <a href="{{ url_for('logout') }}" class="btn btn-sm" aria-label="Sign out of student account">
+          Sign out
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="container" role="main">
+
+    <!-- Status Area -->
+    <section class="status-bar" aria-label="Attendance Status Overview">
+      <div class="status-user-welcome">
+        <h2>Welcome back, {{ student.name }}</h2>
+        <p>Logged in as <code>{{ student.username }}</code> • Student ID #{{ student.id }}</p>
+      </div>
+
+      <div class="status-badges-group">
+        <!-- Tier Badge -->
+        {% if data.tier == 'Critical' %}
+          <span class="badge badge-critical">🔴 Critical (&lt; 80%)</span>
+        {% elif data.tier == 'At risk' %}
+          <span class="badge badge-risk">🟠 At risk (80–90%)</span>
+        {% elif data.tier == 'Watch' %}
+          <span class="badge badge-watch">🟡 Watch (90–95%)</span>
+        {% else %}
+          <span class="badge badge-ontrack">🟢 On track (≥ 95%)</span>
+        {% endif %}
+
+        <!-- Trend Badge -->
+        {% if data.trend == 'Declining' %}
+          <span class="badge badge-trend-declining">↓ Declining ({{ data.trend_delta }}%)</span>
+        {% elif data.trend == 'Improving' %}
+          <span class="badge badge-trend-improving">↑ Improving (+{{ data.trend_delta }}%)</span>
+        {% else %}
+          <span class="badge badge-trend-steady">→ Steady</span>
+        {% endif %}
+
+        <!-- Consecutive Absence Streak Badge -->
+        {% if data.has_streak %}
+          <span class="badge badge-streak">⚡ 3+ days in a row (Max: {{ data.max_streak }}d)</span>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- Stat Cards Grid -->
+    <section class="stat-cards-grid" aria-label="Key Attendance Statistics">
+      <div class="stat-card">
+        <div class="stat-card-title">Tier Attendance</div>
+        <div class="stat-card-val" style="color: {% if data.tier == 'Critical' %}var(--tier-critical){% elif data.tier == 'At risk' %}var(--tier-risk){% elif data.tier == 'Watch' %}var(--tier-watch){% else %}var(--tier-ontrack){% endif %};">
+          {{ data.tier_pct }}%
+        </div>
+        <div class="stat-card-sub">Excused counted as present</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-title">Overall Attendance</div>
+        <div class="stat-card-val">{{ data.overall_pct }}%</div>
+        <div class="stat-card-sub">Actual classroom rate</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-title">Days Present</div>
+        <div class="stat-card-val">{{ data.total_present }}</div>
+        <div class="stat-card-sub">Out of {{ data.total_enrolled }} days</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-title">Excused Absences</div>
+        <div class="stat-card-val">{{ data.total_excused }}</div>
+        <div class="stat-card-sub">Documented absences</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-title">Unexcused Absences</div>
+        <div class="stat-card-val" style="{% if data.total_unexcused > 0 %}color: var(--tier-critical);{% endif %}">
+          {{ data.total_unexcused }}
+        </div>
+        <div class="stat-card-sub">Impacts tier percentage</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-title">Longest Streak</div>
+        <div class="stat-card-val" style="{% if data.has_streak %}color: var(--flag-consec-text);{% endif %}">
+          {{ data.max_streak }}d
+        </div>
+        <div class="stat-card-sub">Consecutive days missed</div>
+      </div>
+    </section>
+
+    <!-- Weekly Attendance Bar Chart (Pure SVG) -->
+    <section class="chart-card" aria-label="Weekly Attendance Trend Chart">
+      <div class="card-header">
+        <h3>Weekly Attendance Rate</h3>
+        <span style="font-size: 0.8rem; color: var(--text-muted);">Weeks 1 to {{ data.weekly_records|length }}</span>
+      </div>
+
+      <div class="svg-chart-wrapper">
+        <svg 
+          class="svg-attendance-chart" 
+          viewBox="0 0 600 220" 
+          xmlns="http://www.w3.org/2000/svg"
+          role="img"
+          aria-label="Bar chart showing attendance percentage for each week"
+        >
+          <!-- Grid lines for 100%, 80%, 50% -->
+          <line x1="50" y1="20" x2="570" y2="20" stroke="var(--border-subtle)" stroke-dasharray="3,3" />
+          <text x="42" y="24" fill="var(--text-muted)" font-size="11" text-anchor="end">100%</text>
+
+          <line x1="50" y1="52" x2="570" y2="52" stroke="var(--border-subtle)" stroke-dasharray="3,3" />
+          <text x="42" y="56" fill="var(--text-muted)" font-size="11" text-anchor="end">80%</text>
+
+          <line x1="50" y1="100" x2="570" y2="100" stroke="var(--border-subtle)" stroke-dasharray="3,3" />
+          <text x="42" y="104" fill="var(--text-muted)" font-size="11" text-anchor="end">50%</text>
+
+          <!-- Baseline -->
+          <line x1="50" y1="180" x2="570" y2="180" stroke="var(--border)" stroke-width="1.5" />
+          <text x="42" y="184" fill="var(--text-muted)" font-size="11" text-anchor="end">0%</text>
+
+          <!-- Bars for each week -->
+          {% for w in data.weekly_records %}
+            {% set x_pos = 75 + loop.index0 * 85 %}
+            {% set bar_height = (w.attendance_pct / 100.0) * 160 %}
+            {% set y_pos = 180 - bar_height %}
+
+            <!-- Color logic: red < 80, orange < 90, green >= 90 -->
+            {% if w.attendance_pct < 80.0 %}
+              {% set bar_color = "var(--tier-critical)" %}
+            {% elif w.attendance_pct < 90.0 %}
+              {% set bar_color = "var(--tier-risk)" %}
+            {% else %}
+              {% set bar_color = "var(--tier-ontrack)" %}
+            {% endif %}
+
+            <!-- Bar Rect -->
+            <rect 
+              x="{{ x_pos }}" 
+              y="{{ y_pos }}" 
+              width="45" 
+              height="{{ bar_height }}" 
+              rx="4" 
+              fill="{{ bar_color }}"
+              opacity="0.9"
+            >
+              <title>Week {{ w.week }}: {{ w.attendance_pct }}% ({{ w.days_present }}/{{ w.total_days }} days)</title>
+            </rect>
+
+            <!-- Value above bar -->
+            <text 
+              x="{{ x_pos + 22.5 }}" 
+              y="{{ y_pos - 6 }}" 
+              fill="var(--text)" 
+              font-size="11" 
+              font-weight="700" 
+              text-anchor="middle"
+            >
+              {{ w.attendance_pct }}%
+            </text>
+
+            <!-- Week label below baseline -->
+            <text 
+              x="{{ x_pos + 22.5 }}" 
+              y="198" 
+              fill="var(--text)" 
+              font-size="11" 
+              font-weight="600" 
+              text-anchor="middle"
+            >
+              Wk {{ w.week }}
+            </text>
+
+            <!-- Days ratio below week -->
+            <text 
+              x="{{ x_pos + 22.5 }}" 
+              y="212" 
+              fill="var(--text-muted)" 
+              font-size="10" 
+              text-anchor="middle"
+            >
+              {{ w.days_present }}/{{ w.total_days }}d
+            </text>
+          {% endfor %}
+        </svg>
+      </div>
+
+      <div class="chart-legend">
+        <span class="legend-item"><span class="legend-dot green"></span> On track (≥ 90%)</span>
+        <span class="legend-item"><span class="legend-dot orange"></span> Watch / At risk (80–89%)</span>
+        <span class="legend-item"><span class="legend-dot red"></span> Critical (&lt; 80%)</span>
+      </div>
+    </section>
+
+    <!-- Week-by-Week Table -->
+    <section class="table-card" aria-label="Detailed Weekly Attendance Table">
+      <div class="table-card-header">
+        <h3>Week-by-Week Attendance Details</h3>
+      </div>
+      <div class="table-responsive-container">
+        <table class="attendance-table">
+          <thead>
+            <tr>
+              <th>Week</th>
+              <th>Days Present</th>
+              <th>Excused</th>
+              <th>Unexcused</th>
+              <th>Total Days</th>
+              <th>Weekly Rate</th>
+              <th>Consecutive Streak</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for w in data.weekly_records %}
+            <tr>
+              <td style="font-weight: 700;">Week {{ w.week }}</td>
+              <td>{{ w.days_present }} days</td>
+              <td>{{ w.excused }}</td>
+              <td style="{% if w.unexcused > 0 %}color: var(--tier-critical); font-weight: 600;{% endif %}">{{ w.unexcused }}</td>
+              <td>{{ w.total_days }} days</td>
+              <td style="font-weight: 700;">
+                <span class="badge {% if w.attendance_pct < 80 %}badge-critical{% elif w.attendance_pct < 90 %}badge-risk{% else %}badge-ontrack{% endif %}">
+                  {{ w.attendance_pct }}%
+                </span>
+              </td>
+              <td>
+                {% if w.consecutive_absent >= 3 %}
+                  <span class="badge badge-streak">⚡ {{ w.consecutive_absent }} days</span>
+                {% else %}
+                  <span style="color: var(--text-muted);">{{ w.consecutive_absent }} day(s)</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Notifications & Active Alert Reasons -->
+    <section class="notifications-panel" aria-label="Attendance Alerts and Guidance">
+      <h3 style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem;">Attendance Status & Notifications</h3>
+      
+      {% if data.flagged and data.reasons %}
+        <p style="font-size: 0.88rem; color: var(--text-muted);">
+          Your attendance profile currently includes active flags requiring attention. Click the notification bell to view your full guardian communication notice.
+        </p>
+        <div class="reasons-list">
+          {% for r in data.reasons %}
+          <div class="reason-card {{ r.severity }}">
+            <span class="reason-icon" aria-hidden="true">
+              {% if r.severity == 'critical' %}🔴{% elif r.severity == 'risk' %}🟠{% elif r.severity == 'watch' %}🟡{% else %}⚡{% endif %}
+            </span>
+            <div class="reason-body">
+              <h4>{{ r.title }}</h4>
+              <p>{{ r.description }}</p>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background-color: var(--tier-ontrack-bg); border: 1px solid var(--tier-ontrack-border); border-radius: var(--radius-sm); color: var(--tier-ontrack-text);">
+          <span style="font-size: 1.5rem;" aria-hidden="true">✅</span>
+          <div>
+            <h4 style="font-size: 0.95rem; font-weight: 700;">All Good</h4>
+            <p style="font-size: 0.88rem;">Your attendance is consistent, meeting all grade-level expectations. Keep up the great work!</p>
+          </div>
+        </div>
+      {% endif %}
+    </section>
+
+  </main>
+
+  <!-- Alert System Modal Popup Dialog -->
+  {% if data.flagged %}
+  <div 
+    class="modal-backdrop" 
+    id="alert-modal-backdrop" 
+    data-show-on-load="{{ 'true' if show_popup_on_load else 'false' }}"
+    aria-hidden="true"
+  >
+    <div 
+      class="modal-dialog" 
+      role="alertdialog" 
+      aria-modal="true" 
+      aria-labelledby="alert-dialog-title"
+      aria-describedby="alert-dialog-desc"
+    >
+      <div class="modal-header {% if data.tier == 'Critical' %}alert-critical{% else %}alert-notice{% endif %}">
+        <h2 class="modal-title" id="alert-dialog-title">
+          <span>{% if data.tier == 'Critical' %}⚠️{% else %}ℹ️{% endif %}</span>
+          <span>{{ data.alert_title }}</span>
+        </h2>
+      </div>
+
+      <div class="modal-body">
+        <div id="alert-dialog-desc">
+          <div class="modal-section-title">Active Attendance Concerns</div>
+          <div class="reasons-list" style="margin-bottom: 1.25rem;">
+            {% for r in data.reasons %}
+            <div class="reason-card {{ r.severity }}">
+              <span class="reason-icon" aria-hidden="true">
+                {% if r.severity == 'critical' %}🔴{% elif r.severity == 'risk' %}🟠{% elif r.severity == 'watch' %}🟡{% else %}⚡{% endif %}
+              </span>
+              <div class="reason-body">
+                <h4>{{ r.title }}</h4>
+                <p>{{ r.description }}</p>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="modal-section-title">Ready-to-Send Guardian Message</div>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.35rem;">
+          The following message has been prepared for your family with clear next steps:
+        </p>
+        <textarea 
+          id="modal-guardian-message" 
+          class="guardian-message-box" 
+          readonly
+          aria-label="Guardian attendance notice message"
+        >{{ data.guardian_message }}</textarea>
+      </div>
+
+      <div class="modal-footer">
+        <div style="display: flex; align-items: center; gap: 0.6rem;">
+          <button type="button" class="btn btn-primary" id="modal-copy-btn">
+            📋 Copy message
+          </button>
+          <span class="copy-toast" id="modal-copy-toast" role="status" aria-live="polite">✓ Copied to clipboard!</span>
+        </div>
+
+        <button 
+          type="button" 
+          class="btn" 
+          id="modal-understand-btn"
+          data-alert-id="{{ alert.id if alert else '' }}"
+        >
+          I understand
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Application Footer -->
+  <footer class="app-footer" role="contentinfo">
+    <p>Student Attendance Tracking System • Lincoln High School Attendance Intervention</p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
